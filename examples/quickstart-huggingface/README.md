@@ -12,14 +12,18 @@ In this example, we will federated the training of a [BERT-tiny](https://hugging
 
 ## Set up the project
 
-### Clone the project
+### Fetch the app
 
-Start by cloning the example project. We prepared a single-line command that you can copy into your shell which will checkout the example for you:
+Install Flower:
 
 ```shell
-git clone --depth=1 https://github.com/adap/flower.git _tmp \
-		&& mv _tmp/examples/quickstart-huggingface . \
-		&& rm -rf _tmp && cd quickstart-huggingface
+pip install flwr
+```
+
+Fetch the app:
+
+```shell
+flwr new @flwrlabs/quickstart-huggingface
 ```
 
 This will create a new directory called `quickstart-huggingface` containing the following files:
@@ -49,7 +53,7 @@ You can run your Flower project in both _simulation_ and _deployment_ mode witho
 
 ### Run with the Simulation Engine
 
-> \[!TIP\]
+> [!TIP]
 > This example runs faster when the `ClientApp`s have access to a GPU. If your system has one, you can make use of it by configuring the `backend.client-resources` component in `pyproject.toml`. If you want to try running the example with GPU right away, use the `local-simulation-gpu` federation as shown below. Check the [Simulation Engine documentation](https://flower.ai/docs/framework/how-to-run-simulations.html) to learn more about Flower simulations and how to optimize them.
 
 ```bash
@@ -67,10 +71,10 @@ flwr run . local-simulation-gpu
 You can also override some of the settings for your `ClientApp` and `ServerApp` defined in `pyproject.toml`. For example
 
 ```bash
-flwr run --run-config "num-server-rounds=5 fraction-fit=0.1"
+flwr run --run-config "num-server-rounds=5 fraction-train=0.1"
 ```
 
-> \[!TIP\]
+> [!TIP]
 > For a more detailed walk-through check our [quickstart 🤗Transformers tutorial](https://flower.ai/docs/framework/tutorial-quickstart-huggingface.html)
 
 ### Run with the Deployment Engine

@@ -2,8 +2,9 @@
 .. meta::
     :description: Learn how to use built-in modifiers to enhance the behaviour of a ClientApp in Flower for federated learning.
 
-Use Built-in Mods
-=================
+###################
+ Use Built-in Mods
+###################
 
 .. note::
 
@@ -14,8 +15,9 @@ In this tutorial, we will learn how to utilize built-in mods to augment the beha
 a ``ClientApp``. Mods (sometimes also called Modifiers) allow us to perform operations
 before and after a task is processed in the ``ClientApp``.
 
-What are Mods?
---------------
+****************
+ What are Mods?
+****************
 
 A Mod is a callable that wraps around a ``ClientApp``. It can manipulate or inspect the
 incoming ``Message`` and the resulting outgoing ``Message``. The signature for a ``Mod``
@@ -30,8 +32,8 @@ A typical mod function might look something like this:
 
 .. code-block:: python
 
-    from flwr.client.typing import ClientAppCallable
-    from flwr.common import Context, Message
+    from flwr.app import Context, Message
+    from flwr.clientapp.typing import ClientAppCallable
 
 
     def example_mod(msg: Message, ctx: Context, call_next: ClientAppCallable) -> Message:
@@ -43,8 +45,9 @@ A typical mod function might look something like this:
         # before returning
         return msg
 
-Using Mods
-----------
+************
+ Using Mods
+************
 
 Mods can be registered in two ways: **Application-wide mods** and **Function-specific
 mods**.
@@ -55,39 +58,35 @@ mods**.
    function decorated by ``@app.train()``)
 
 1. Registering Application-wide Mods
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+====================================
 
 To use application-wide mods in your ``ClientApp``, follow these steps:
 
 Import the required mods
-++++++++++++++++++++++++
+------------------------
 
 .. code-block:: python
 
     import flwr as fl
-    from flwr.client.mod import example_mod_1, example_mod_2
+    from flwr.clientapp.mod import example_mod_1, example_mod_2
 
 Create the ``ClientApp`` with application-wide mods
-+++++++++++++++++++++++++++++++++++++++++++++++++++
+---------------------------------------------------
 
 Create your ``ClientApp`` and pass the mods as a list to the ``mods`` argument. The
 order in which you provide the mods matters:
 
 .. code-block:: python
 
-    app = fl.client.ClientApp(
-        client_fn=client_fn,  # Not needed if using decorators
+    app = fl.clientapp.ClientApp(
         mods=[
             example_mod_1,  # Application-wide Mod 1
             example_mod_2,  # Application-wide Mod 2
         ],
     )
 
-If you define functions to handle messages using decorators instead of ``client_fn``,
-e.g., ``@app.train()``, you do not need to pass the ``client_fn`` argument.
-
 2. Registering Function-specific Mods
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+=====================================
 
 Instead of applying mods to the entire ``ClientApp``, you can specify them for a
 particular function:
@@ -95,9 +94,9 @@ particular function:
 .. code-block:: python
 
     import flwr as fl
-    from flwr.client.mod import example_mod_3, example_mod_4
+    from flwr.clientapp.mod import example_mod_3, example_mod_4
 
-    app = fl.client.ClientApp()
+    app = fl.clientapp.ClientApp()
 
 
     @app.train(mods=[example_mod_3, example_mod_4])
@@ -114,8 +113,9 @@ particular function:
 In this case, ``example_mod_3`` and ``example_mod_4`` are only applied to the ``train``
 function.
 
-Order of Execution
-------------------
+********************
+ Order of Execution
+********************
 
 When the ``ClientApp`` runs, the mods execute in the following order:
 
@@ -132,23 +132,23 @@ to the next mod, and likewise with the outgoing ``Message`` before returning it 
 stack.
 
 Example Execution Flow
-~~~~~~~~~~~~~~~~~~~~~~
+======================
 
 Assuming the following registration:
 
 .. code-block:: python
 
-    app = fl.client.ClientApp(mods=[example_mod_1, example_mod_2])
+    app = fl.clientapp.ClientApp(mods=[example_mod_1, example_mod_2])
 
 
     @app.train(mods=[example_mod_3, example_mod_4])
     def train(msg, ctx):
-        return Message(fl.common.RecordDict(), reply_to=msg)
+        return Message(fl.app.RecordDict(), reply_to=msg)
 
 
     @app.evaluate()
     def evaluate(msg, ctx):
-        return Message(fl.common.RecordDict(), reply_to=msg)
+        return Message(fl.app.RecordDict(), reply_to=msg)
 
 The execution order for an incoming **train** message is as follows:
 
@@ -170,8 +170,9 @@ The execution order for an incoming **evaluate** message is as follows:
 4. ``example_mod_2`` (after handling)
 5. ``example_mod_1`` (after handling)
 
-Conclusion
-----------
+************
+ Conclusion
+************
 
 By following this guide, you have learned how to effectively use mods to enhance your
 ``ClientApp``'s functionality. Remember that the order of mods is crucial and affects

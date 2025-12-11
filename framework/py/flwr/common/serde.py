@@ -15,11 +15,9 @@
 """ProtoBuf serialization and deserialization."""
 
 
-from collections import OrderedDict
 from typing import Any, cast
 
 # pylint: disable=E0611
-from flwr.proto.clientappio_pb2 import ClientAppOutputCode, ClientAppOutputStatus
 from flwr.proto.fab_pb2 import Fab as ProtoFab
 from flwr.proto.message_pb2 import Context as ProtoContext
 from flwr.proto.message_pb2 import Message as ProtoMessage
@@ -411,9 +409,9 @@ def array_record_from_proto(
 ) -> ArrayRecord:
     """Deserialize ArrayRecord from ProtoBuf."""
     return ArrayRecord(
-        array_dict=OrderedDict(
-            {item.key: array_from_proto(item.value) for item in record_proto.items}
-        ),
+        array_dict={
+            item.key: array_from_proto(item.value) for item in record_proto.items
+        },
         keep_input=False,
     )
 
@@ -502,12 +500,14 @@ def recorddict_from_proto(recorddict_proto: ProtoRecordDict) -> RecordDict:
 
 def fab_to_proto(fab: typing.Fab) -> ProtoFab:
     """Create a proto Fab object from a Python Fab."""
-    return ProtoFab(hash_str=fab.hash_str, content=fab.content)
+    return ProtoFab(
+        hash_str=fab.hash_str, content=fab.content, verifications=fab.verifications
+    )
 
 
 def fab_from_proto(fab: ProtoFab) -> typing.Fab:
     """Create a Python Fab object from a proto Fab."""
-    return typing.Fab(fab.hash_str, fab.content)
+    return typing.Fab(fab.hash_str, fab.content, dict(fab.verifications))
 
 
 # === User configs ===
@@ -631,6 +631,10 @@ def run_to_proto(run: typing.Run) -> ProtoRun:
         finished_at=run.finished_at,
         status=run_status_to_proto(run.status),
         flwr_aid=run.flwr_aid,
+        federation=run.federation,
+        bytes_sent=run.bytes_sent,
+        bytes_recv=run.bytes_recv,
+        clientapp_runtime=run.clientapp_runtime,
     )
     return proto
 
@@ -649,35 +653,12 @@ def run_from_proto(run_proto: ProtoRun) -> typing.Run:
         finished_at=run_proto.finished_at,
         status=run_status_from_proto(run_proto.status),
         flwr_aid=run_proto.flwr_aid,
+        federation=run_proto.federation,
+        bytes_sent=run_proto.bytes_sent,
+        bytes_recv=run_proto.bytes_recv,
+        clientapp_runtime=run_proto.clientapp_runtime,
     )
     return run
-
-
-# === ClientApp status messages ===
-
-
-def clientappstatus_to_proto(
-    status: typing.ClientAppOutputStatus,
-) -> ClientAppOutputStatus:
-    """Serialize `ClientAppOutputStatus` to ProtoBuf."""
-    code = ClientAppOutputCode.SUCCESS
-    if status.code == typing.ClientAppOutputCode.DEADLINE_EXCEEDED:
-        code = ClientAppOutputCode.DEADLINE_EXCEEDED
-    if status.code == typing.ClientAppOutputCode.UNKNOWN_ERROR:
-        code = ClientAppOutputCode.UNKNOWN_ERROR
-    return ClientAppOutputStatus(code=code, message=status.message)
-
-
-def clientappstatus_from_proto(
-    msg: ClientAppOutputStatus,
-) -> typing.ClientAppOutputStatus:
-    """Deserialize `ClientAppOutputStatus` from ProtoBuf."""
-    code = typing.ClientAppOutputCode.SUCCESS
-    if msg.code == ClientAppOutputCode.DEADLINE_EXCEEDED:
-        code = typing.ClientAppOutputCode.DEADLINE_EXCEEDED
-    if msg.code == ClientAppOutputCode.UNKNOWN_ERROR:
-        code = typing.ClientAppOutputCode.UNKNOWN_ERROR
-    return typing.ClientAppOutputStatus(code=code, message=msg.message)
 
 
 # === Run status ===

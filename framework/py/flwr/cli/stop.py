@@ -18,7 +18,7 @@
 import io
 import json
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.console import Console
@@ -32,10 +32,13 @@ from flwr.cli.config_utils import (
 from flwr.cli.constant import FEDERATION_CONFIG_HELP_MESSAGE
 from flwr.common.constant import FAB_CONFIG_FILE, CliOutputFormat
 from flwr.common.logger import print_json_error, redirect_output, restore_output
-from flwr.proto.exec_pb2 import StopRunRequest, StopRunResponse  # pylint: disable=E0611
-from flwr.proto.exec_pb2_grpc import ExecStub
+from flwr.proto.control_pb2 import (  # pylint: disable=E0611
+    StopRunRequest,
+    StopRunResponse,
+)
+from flwr.proto.control_pb2_grpc import ControlStub
 
-from .utils import flwr_cli_grpc_exc_handler, init_channel, try_obtain_cli_auth_plugin
+from .utils import flwr_cli_grpc_exc_handler, init_channel, load_cli_auth_plugin
 
 
 def stop(  # pylint: disable=R0914
@@ -48,11 +51,11 @@ def stop(  # pylint: disable=R0914
         typer.Argument(help="Path of the Flower project"),
     ] = Path("."),
     federation: Annotated[
-        Optional[str],
+        str | None,
         typer.Argument(help="Name of the federation"),
     ] = None,
     federation_config_overrides: Annotated[
-        Optional[list[str]],
+        list[str] | None,
         typer.Option(
             "--federation-config",
             help=FEDERATION_CONFIG_HELP_MESSAGE,
@@ -67,7 +70,11 @@ def stop(  # pylint: disable=R0914
         ),
     ] = CliOutputFormat.DEFAULT,
 ) -> None:
-    """Stop a run."""
+    """Stop a Flower run.
+
+    This command stops a running Flower App execution by sending a stop request to the
+    SuperLink via the Control API.
+    """
     suppress_output = output_format == CliOutputFormat.JSON
     captured_output = io.StringIO()
     try:
@@ -78,7 +85,7 @@ def stop(  # pylint: disable=R0914
         typer.secho("Loading project configuration... ", fg=typer.colors.BLUE)
 
         pyproject_path = app / FAB_CONFIG_FILE if app else None
-        config, errors, warnings = load_and_validate(path=pyproject_path)
+        config, errors, warnings = load_and_validate(pyproject_path, check_module=False)
         config = process_loaded_project_config(config, errors, warnings)
         federation, federation_config = validate_federation_in_project_config(
             federation, config, federation_config_overrides
@@ -86,9 +93,9 @@ def stop(  # pylint: disable=R0914
         exit_if_no_address(federation_config, "stop")
         channel = None
         try:
-            auth_plugin = try_obtain_cli_auth_plugin(app, federation, federation_config)
+            auth_plugin = load_cli_auth_plugin(app, federation, federation_config)
             channel = init_channel(app, federation_config, auth_plugin)
-            stub = ExecStub(channel)  # pylint: disable=unused-variable # noqa: F841
+            stub = ControlStub(channel)  # pylint: disable=unused-variable # noqa: F841
 
             typer.secho(f"✋ Stopping run ID {run_id}...", fg=typer.colors.GREEN)
             _stop_run(stub=stub, run_id=run_id, output_format=output_format)
@@ -98,6 +105,7 @@ def stop(  # pylint: disable=R0914
                 f"❌ {err}",
                 fg=typer.colors.RED,
                 bold=True,
+                err=True,
             )
             raise typer.Exit(code=1) from err
         finally:
@@ -113,6 +121,7 @@ def stop(  # pylint: disable=R0914
                 f"{err}",
                 fg=typer.colors.RED,
                 bold=True,
+                err=True,
             )
     finally:
         if suppress_output:
@@ -120,8 +129,18 @@ def stop(  # pylint: disable=R0914
         captured_output.close()
 
 
-def _stop_run(stub: ExecStub, run_id: int, output_format: str) -> None:
-    """Stop a run."""
+def _stop_run(stub: ControlStub, run_id: int, output_format: str) -> None:
+    """Stop a run and display the result.
+
+    Parameters
+    ----------
+    stub : ControlStub
+        The gRPC stub for Control API communication.
+    run_id : int
+        The unique identifier of the run to stop.
+    output_format : str
+        Output format ('default' or 'json').
+    """
     with flwr_cli_grpc_exc_handler():
         response: StopRunResponse = stub.StopRun(request=StopRunRequest(run_id=run_id))
     if response.success:
@@ -136,4 +155,6 @@ def _stop_run(stub: ExecStub, run_id: int, output_format: str) -> None:
             restore_output()
             Console().print_json(run_output)
     else:
-        typer.secho(f"❌ Run {run_id} couldn't be stopped.", fg=typer.colors.RED)
+        typer.secho(
+            f"❌ Run {run_id} couldn't be stopped.", fg=typer.colors.RED, err=True
+        )

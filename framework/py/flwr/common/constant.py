@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+import os
+
 TRANSPORT_TYPE_GRPC_BIDI = "grpc-bidi"
 TRANSPORT_TYPE_GRPC_RERE = "grpc-rere"
 TRANSPORT_TYPE_GRPC_ADAPTER = "grpc-adapter"
@@ -35,7 +37,7 @@ CLIENTAPPIO_PORT = "9094"
 SERVERAPPIO_PORT = "9091"
 FLEETAPI_GRPC_RERE_PORT = "9092"
 FLEETAPI_PORT = "9095"
-EXEC_API_PORT = "9093"
+CONTROL_API_PORT = "9093"
 SIMULATIONIO_PORT = "9096"
 # Octets
 SERVER_OCTET = "0.0.0.0"
@@ -51,7 +53,7 @@ FLEET_API_GRPC_BIDI_DEFAULT_ADDRESS = (
     "[::]:8080"  # IPv6 to keep start_server compatible
 )
 FLEET_API_REST_DEFAULT_ADDRESS = f"{SERVER_OCTET}:{FLEETAPI_PORT}"
-EXEC_API_DEFAULT_SERVER_ADDRESS = f"{SERVER_OCTET}:{EXEC_API_PORT}"
+CONTROL_API_DEFAULT_SERVER_ADDRESS = f"{SERVER_OCTET}:{CONTROL_API_PORT}"
 SIMULATIONIO_API_DEFAULT_SERVER_ADDRESS = f"{SERVER_OCTET}:{SIMULATIONIO_PORT}"
 SIMULATIONIO_API_DEFAULT_CLIENT_ADDRESS = f"{CLIENT_OCTET}:{SIMULATIONIO_PORT}"
 
@@ -60,7 +62,9 @@ HEARTBEAT_DEFAULT_INTERVAL = 30
 HEARTBEAT_CALL_TIMEOUT = 5
 HEARTBEAT_BASE_MULTIPLIER = 0.8
 HEARTBEAT_RANDOM_RANGE = (-0.1, 0.1)
-HEARTBEAT_MAX_INTERVAL = 1e300
+HEARTBEAT_MIN_INTERVAL = 10
+HEARTBEAT_MAX_INTERVAL = 1800  # 30 minutes
+HEARTBEAT_INTERVAL_INF = 1e300  # Large value, disabling heartbeats
 HEARTBEAT_PATIENCE = 2
 RUN_FAILURE_DETAILS_NO_HEARTBEAT = "No heartbeat received from the run."
 
@@ -70,12 +74,24 @@ NODE_ID_NUM_BYTES = 8
 
 # Constants for FAB
 APP_DIR = "apps"
-FAB_ALLOWED_EXTENSIONS = {".py", ".toml", ".md"}
 FAB_CONFIG_FILE = "pyproject.toml"
 FAB_DATE = (2024, 10, 1, 0, 0, 0)
 FAB_HASH_TRUNCATION = 8
+FAB_MAX_SIZE = 10 * 1024 * 1024  # 10 MB
 FLWR_DIR = ".flwr"  # The default Flower directory: ~/.flwr/
 FLWR_HOME = "FLWR_HOME"  # If set, override the default Flower directory
+# FAB file include patterns (gitignore-style patterns)
+FAB_INCLUDE_PATTERNS = (
+    "**/*.py",
+    "**/*.toml",
+    "**/*.md",
+)
+# FAB file exclude patterns (gitignore-style patterns)
+FAB_EXCLUDE_PATTERNS = (
+    f"{FLWR_DIR}/**",  # Exclude the .flwr directory
+    "**/__pycache__/**",
+    FAB_CONFIG_FILE,  # Exclude the original pyproject.toml
+)
 
 # Constant for SuperLink
 SUPERLINK_NODE_ID = 1
@@ -102,27 +118,27 @@ ISOLATION_MODE_PROCESS = "process"
 # Log streaming configurations
 CONN_REFRESH_PERIOD = 60  # Stream connection refresh period
 CONN_RECONNECT_INTERVAL = 0.5  # Reconnect interval between two stream connections
-LOG_STREAM_INTERVAL = 0.5  # Log stream interval for `ExecServicer.StreamLogs`
+LOG_STREAM_INTERVAL = 0.5  # Log stream interval for `ControlServicer.StreamLogs`
 LOG_UPLOAD_INTERVAL = 0.2  # Minimum interval between two log uploads
 
 # Retry configurations
 MAX_RETRY_DELAY = 20  # Maximum delay duration between two consecutive retries.
 
-# Constants for user authentication
+# Constants for account authentication
 CREDENTIALS_DIR = ".credentials"
-AUTH_TYPE_JSON_KEY = "auth-type"  # For key name in JSON file
-AUTH_TYPE_YAML_KEY = "auth_type"  # For key name in YAML file
+AUTHN_TYPE_JSON_KEY = "authn-type"  # For key name in JSON file
+AUTHN_TYPE_YAML_KEY = "authn_type"  # For key name in YAML file
 ACCESS_TOKEN_KEY = "flwr-oidc-access-token"
 REFRESH_TOKEN_KEY = "flwr-oidc-refresh-token"
 
-# Constants for user authorization
+# Constants for account authorization
 AUTHZ_TYPE_YAML_KEY = "authz_type"  # For key name in YAML file
 
 # Constants for node authentication
 PUBLIC_KEY_HEADER = "flwr-public-key-bin"  # Must end with "-bin" for binary data
 SIGNATURE_HEADER = "flwr-signature-bin"  # Must end with "-bin" for binary data
 TIMESTAMP_HEADER = "flwr-timestamp"
-TIMESTAMP_TOLERANCE = 10  # General tolerance for timestamp verification
+TIMESTAMP_TOLERANCE = 300  # General tolerance for timestamp verification
 SYSTEM_TIME_TOLERANCE = 5  # Allowance for system time drift
 
 # Constants for grpc retry
@@ -134,6 +150,9 @@ GC_THRESHOLD = 200_000_000  # 200 MB
 # Constants for Inflatable
 HEAD_BODY_DIVIDER = b"\x00"
 HEAD_VALUE_DIVIDER = " "
+FLWR_PRIVATE_MAX_ARRAY_CHUNK_SIZE = int(
+    os.getenv("FLWR_PRIVATE_MAX_ARRAY_CHUNK_SIZE", "5242880")
+)  # 5 MB
 
 # Constants for serialization
 INT64_MAX_VALUE = 9223372036854775807  # (1 << 63) - 1
@@ -142,16 +161,27 @@ INT64_MAX_VALUE = 9223372036854775807  # (1 << 63) - 1
 FLWR_APP_TOKEN_LENGTH = 128  # Length of the token used
 
 # Constants for object pushing and pulling
-MAX_CONCURRENT_PUSHES = 8  # Default maximum number of concurrent pushes
-MAX_CONCURRENT_PULLS = 8  # Default maximum number of concurrent pulls
+FLWR_PRIVATE_MAX_CONCURRENT_OBJ_PUSHES = int(
+    os.getenv("FLWR_PRIVATE_MAX_CONCURRENT_OBJ_PUSHES", "2")
+)  # Default maximum number of concurrent pushes
+FLWR_PRIVATE_MAX_CONCURRENT_OBJ_PULLS = int(
+    os.getenv("FLWR_PRIVATE_MAX_CONCURRENT_OBJ_PULLS", "2")
+)  # Default maximum number of concurrent pulls
 PULL_MAX_TIME = 7200  # Default maximum time to wait for pulling objects
 PULL_MAX_TRIES_PER_OBJECT = 500  # Default maximum number of tries to pull an object
 PULL_INITIAL_BACKOFF = 1  # Initial backoff time for pulling objects
 PULL_BACKOFF_CAP = 10  # Maximum backoff time for pulling objects
 
 
-# ExecServicer constants
+# ControlServicer constants
 RUN_ID_NOT_FOUND_MESSAGE = "Run ID not found"
+NO_ACCOUNT_AUTH_MESSAGE = "ControlServicer initialized without account authentication"
+NO_ARTIFACT_PROVIDER_MESSAGE = "ControlServicer initialized without artifact provider"
+PULL_UNFINISHED_RUN_MESSAGE = "Cannot pull artifacts for an unfinished run"
+SUPERNODE_NOT_CREATED_FROM_CLI_MESSAGE = "Invalid SuperNode credentials"
+PUBLIC_KEY_ALREADY_IN_USE_MESSAGE = "Public key already in use"
+PUBLIC_KEY_NOT_VALID = "The provided public key is not valid"
+NODE_NOT_FOUND_MESSAGE = "Node ID not found for account"
 
 
 class MessageType:
@@ -197,6 +227,9 @@ class ErrorCode:
     MESSAGE_UNAVAILABLE = 3
     REPLY_MESSAGE_UNAVAILABLE = 4
     NODE_UNAVAILABLE = 5
+    MOD_FAILED_PRECONDITION = 6
+    INVALID_FAB = 7
+    CLIENT_APP_CRASHED = 8
 
     def __new__(cls) -> ErrorCode:
         """Prevent instantiation."""
@@ -239,12 +272,23 @@ class CliOutputFormat:
         raise TypeError(f"{cls.__name__} cannot be instantiated.")
 
 
-class AuthType:
-    """User authentication types."""
+class AuthnType:
+    """Account authentication types."""
 
+    NOOP = "noop"
     OIDC = "oidc"
 
-    def __new__(cls) -> AuthType:
+    def __new__(cls) -> AuthnType:
+        """Prevent instantiation."""
+        raise TypeError(f"{cls.__name__} cannot be instantiated.")
+
+
+class AuthzType:
+    """Account authorization types."""
+
+    NOOP = "noop"
+
+    def __new__(cls) -> AuthzType:
         """Prevent instantiation."""
         raise TypeError(f"{cls.__name__} cannot be instantiated.")
 
@@ -257,3 +301,26 @@ class EventLogWriterType:
     def __new__(cls) -> EventLogWriterType:
         """Prevent instantiation."""
         raise TypeError(f"{cls.__name__} cannot be instantiated.")
+
+
+class ExecPluginType:
+    """SuperExec plugin types."""
+
+    CLIENT_APP = "clientapp"
+    SERVER_APP = "serverapp"
+    SIMULATION = "simulation"
+
+    def __new__(cls) -> ExecPluginType:
+        """Prevent instantiation."""
+        raise TypeError(f"{cls.__name__} cannot be instantiated.")
+
+    @staticmethod
+    def all() -> list[str]:
+        """Return all SuperExec plugin types."""
+        # Filter all constants (uppercase) of the class
+        return [v for k, v in vars(ExecPluginType).items() if k.isupper()]
+
+
+# Constants for No-op auth plugins
+NOOP_FLWR_AID = "<id:none>"
+NOOP_ACCOUNT_NAME = "<name:none>"

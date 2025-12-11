@@ -21,7 +21,7 @@ case "$2" in
     rest_arg_supernode="--rest"
     server_address="http://localhost:9095"
     server_app_address="127.0.0.1:9091"
-    db_arg="--database :flwr-in-memory-state:"
+    db_arg="--database :flwr-in-memory:"
     server_auth=""
     client_auth_1=""
     client_auth_2=""
@@ -41,8 +41,8 @@ case "$2" in
     rest_arg_supernode=""
     server_address="127.0.0.1:9092"
     server_app_address="127.0.0.1:9091"
-    db_arg="--database :flwr-in-memory-state:"
-    server_auth="--auth-list-public-keys keys/client_public_keys.csv"
+    db_arg="--database :flwr-in-memory:"
+    server_auth="--enable-supernode-auth"
     client_auth_1="--auth-supernode-private-key keys/client_credentials_1 --auth-supernode-public-key keys/client_credentials_1.pub"
     client_auth_2="--auth-supernode-private-key keys/client_credentials_2 --auth-supernode-public-key keys/client_credentials_2.pub"
     ;;
@@ -51,7 +51,7 @@ case "$2" in
     rest_arg_supernode=""
     server_address="127.0.0.1:9092"
     server_app_address="127.0.0.1:9091"
-    db_arg="--database :flwr-in-memory-state:"
+    db_arg="--database :flwr-in-memory:"
     server_auth=""
     client_auth_1=""
     client_auth_2=""
@@ -73,10 +73,15 @@ else
   echo -e $"\n[tool.flwr.federations.e2e]\naddress = \"127.0.0.1:9093\"\nroot-certificates = \"certificates/ca.crt\"" >> pyproject.toml
 fi
 
-timeout 5m flower-superlink $server_arg $db_arg $rest_arg_superlink $server_auth \
-  2>&1 | tee flwr_output.log &
+timeout 5m flower-superlink $server_arg $db_arg $rest_arg_superlink $server_auth &
 sl_pid=$(pgrep -f "flower-superlink")
 sleep 3
+
+if [ "$2" = "client-auth" ]; then
+  # Register two SuperNodes using the Flower CLI
+  flwr supernode register keys/client_credentials_1.pub "." e2e
+  flwr supernode register keys/client_credentials_2.pub "." e2e
+fi
 
 timeout 5m flower-supernode $client_arg $rest_arg_supernode \
   --superlink $server_address $client_auth_1 \
@@ -99,23 +104,34 @@ found_success=false
 timeout=240  # Timeout after 240 seconds
 elapsed=0
 
-# Check for "Success" in a loop with a timeout
+# Define a cleanup function
+cleanup_and_exit() {
+    kill $cl1_pid; kill $cl2_pid;
+    sleep 1; kill $sl_pid;
+    exit $1
+}
+
+# Check for "finished:completed" status in a loop with a timeout
 while [ "$found_success" = false ] && [ $elapsed -lt $timeout ]; do
-    if grep -q "Run finished" flwr_output.log; then
-        echo "Training worked correctly!"
-        found_success=true
-        kill $cl1_pid; kill $cl2_pid;
-        sleep 1; kill $sl_pid;
+    # Run the command and capture output
+    output=$(flwr ls . e2e --format=json)
+
+    # Extract status from the first run (or loop over all if needed)
+    status=$(echo "$output" | jq -r '.runs[0].status')
+
+    echo "Current status: $status"
+
+    if [ "$status" == "finished:completed" ]; then
+      found_success=true
+      echo "Training worked correctly!"
+      cleanup_and_exit 0
     else
-        echo "Waiting for training ... ($elapsed seconds elapsed)"
+      echo "⏳ Not completed yet, retrying in 2s..."
+      sleep 2
     fi
-    # Sleep for a short period and increment the elapsed time
-    sleep 2
-    elapsed=$((elapsed + 2))
 done
 
 if [ "$found_success" = false ]; then
     echo "Training had an issue and timed out."
-    kill $cl1_pid; kill $cl2_pid;
-    kill $sl_pid;
+    cleanup_and_exit 1
 fi

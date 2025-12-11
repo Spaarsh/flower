@@ -10,15 +10,18 @@ This introductory example to Flower uses PyTorch, but deep knowledge of PyTorch 
 
 ## Set up the project
 
-### Clone the project
+### Fetch the app
 
-Start by cloning the example project:
+Install Flower:
 
 ```shell
-git clone --depth=1 https://github.com/adap/flower.git _tmp \
-        && mv _tmp/examples/quickstart-pytorch . \
-        && rm -rf _tmp \
-        && cd quickstart-pytorch
+pip install flwr
+```
+
+Fetch the app:
+
+```shell
+flwr new @flwrlabs/quickstart-pytorch
 ```
 
 This will create a new directory called `quickstart-pytorch` with the following structure:
@@ -48,7 +51,7 @@ You can run your Flower project in both _simulation_ and _deployment_ mode witho
 
 ### Run with the Simulation Engine
 
-> \[!TIP\]
+> [!TIP]
 > This example might run faster when the `ClientApp`s have access to a GPU. If your system has one, you can make use of it by configuring the `backend.client-resources` component in `pyproject.toml`. If you want to try running the example with GPU right away, use the `local-simulation-gpu` federation as shown below. Check the [Simulation Engine documentation](https://flower.ai/docs/framework/how-to-run-simulations.html) to learn more.
 
 ```bash
@@ -69,7 +72,7 @@ Run the project in the `local-simulation-gpu` federation that gives CPU and GPU 
 flwr run . local-simulation-gpu
 ```
 
-> \[!TIP\]
+> [!TIP]
 > For a more detailed walk-through check our [quickstart PyTorch tutorial](https://flower.ai/docs/framework/tutorial-quickstart-pytorch.html)
 
 ### Run with the Deployment Engine

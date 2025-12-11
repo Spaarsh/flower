@@ -16,7 +16,6 @@
 
 
 import unittest
-from typing import Optional, Union
 from unittest.mock import MagicMock
 
 import grpc
@@ -43,7 +42,7 @@ class DummyFleetLogPlugin(EventLogWriterPlugin):
         self,
         request: GrpcMessage,
         context: grpc.ServicerContext,
-        account_info: Optional[AccountInfo],
+        account_info: AccountInfo | None,
         method_name: str,
     ) -> LogEntry:
         """Compose pre-event log entry from the provided request and context."""
@@ -62,9 +61,9 @@ class DummyFleetLogPlugin(EventLogWriterPlugin):
         self,
         request: GrpcMessage,
         context: grpc.ServicerContext,
-        account_info: Optional[AccountInfo],
+        account_info: AccountInfo | None,
         method_name: str,
-        response: Optional[Union[GrpcMessage, BaseException]],
+        response: GrpcMessage | BaseException | None,
     ) -> LogEntry:
         """Compose post-event log entry from the provided response and context."""
         return LogEntry(
@@ -120,7 +119,7 @@ class TestFleetEventLogInterceptor(unittest.TestCase):
     def test_unary_unary_interceptor(self) -> None:
         """Test unary-unary RPC call logging."""
         handler_call_details = MagicMock()
-        handler_call_details.method = "dummy_method"
+        handler_call_details.method = "/flwr.proto.Fleet/dummy_method"
         expected_method_name = handler_call_details.method
         continuation = get_noop_unary_unary_handler
         intercepted_handler = self.interceptor.intercept_service(
@@ -140,7 +139,7 @@ class TestFleetEventLogInterceptor(unittest.TestCase):
     def test_unary_unary_interceptor_exception(self) -> None:
         """Test unary-unary RPC call logging when the handler raises a BaseException."""
         handler_call_details = MagicMock()
-        handler_call_details.method = "exception_method"
+        handler_call_details.method = "/flwr.proto.Fleet/exception_method"
         expected_method_name = handler_call_details.method
 
         # pylint: disable=unused-argument

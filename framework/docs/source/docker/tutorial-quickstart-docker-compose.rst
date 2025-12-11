@@ -2,8 +2,9 @@
 .. meta::
     :description: Learn how to quickly set up Flower using Docker Compose, enable TLS, and persist application state for federated learning with minimal configuration effort.
 
-Quickstart with Docker Compose
-==============================
+################################
+ Quickstart with Docker Compose
+################################
 
 This quickstart shows you how to set up Flower using Docker Compose in a single command,
 allowing you to focus on developing your application without worrying about the
@@ -13,8 +14,9 @@ You will also learn how to easily enable TLS encryption and persist application 
 locally, giving you the freedom to choose the configuration that best suits your
 project's needs.
 
-Prerequisites
--------------
+***************
+ Prerequisites
+***************
 
 Before you start, make sure that:
 
@@ -22,8 +24,9 @@ Before you start, make sure that:
 - The Docker daemon is running.
 - Docker Compose V2 is `installed <https://docs.docker.com/compose/install/>`_.
 
-Step 1: Set Up
---------------
+****************
+ Step 1: Set Up
+****************
 
 1. Clone the Docker Compose ``complete`` directory:
 
@@ -51,8 +54,9 @@ Step 1: Set Up
    allowing it to install dependencies in the ``ServerApp`` and ``ClientApp`` images
    correctly.
 
-Step 2: Run Flower in Insecure Mode
------------------------------------
+*************************************
+ Step 2: Run Flower in Insecure Mode
+*************************************
 
 To begin, start Flower with the most basic configuration. In this setup, Flower will run
 without TLS and without persisting the state.
@@ -62,7 +66,7 @@ without TLS and without persisting the state.
     Without TLS, the data sent between the services remains **unencrypted**. Use it only
     for development purposes.
 
-    For production-oriented use cases, :ref:`enable TLS<TLS>` for secure data
+    For production-oriented use cases, :ref:`enable TLS <TLS>` for secure data
     transmission.
 
 Open your terminal and run:
@@ -77,8 +81,9 @@ Open your terminal and run:
     * ``--build``: Rebuild the images for each service if they don't already exist.
     * ``-d``: Detach the containers from the terminal and run them in the background.
 
-Step 3: Run the Quickstart Project
-----------------------------------
+************************************
+ Step 3: Run the Quickstart Project
+************************************
 
 Now that the Flower services have been started via Docker Compose, it is time to run the
 quickstart example.
@@ -102,8 +107,9 @@ addresses in the ``pyproject.toml`` file.
 
        $ flwr run quickstart-compose local-deployment --stream
 
-Step 4: Update the Application
-------------------------------
+********************************
+ Step 4: Update the Application
+********************************
 
 In the next step, change the application code.
 
@@ -155,8 +161,9 @@ In the next step, change the application code.
        Get weights
        INFO :      Starting Flower ServerApp, config: num_rounds=3, no round_timeout
 
-Step 5: Persisting the SuperLink State
---------------------------------------
+****************************************
+ Step 5: Persisting the SuperLink State
+****************************************
 
 In this step, Flower services are configured to persist the state of the SuperLink
 service, ensuring that it maintains its state even after a restart.
@@ -205,8 +212,9 @@ service, ensuring that it maintains its state even after a restart.
 
 .. _tls:
 
-Step 6: Run Flower with TLS
----------------------------
+*****************************
+ Step 6: Run Flower with TLS
+*****************************
 
 1. To demonstrate how to enable TLS, generate self-signed certificates using the
    ``certs.yml`` Compose file.
@@ -245,8 +253,9 @@ Step 6: Run Flower with TLS
 
        $ flwr run quickstart-compose local-deployment-tls --stream
 
-Step 7: Add another SuperNode and ClientApp
--------------------------------------------
+*********************************************
+ Step 7: Add another SuperNode and ClientApp
+*********************************************
 
 You can add more SuperNodes and ClientApps by uncommenting their definitions in the
 ``compose.yml`` file:
@@ -272,11 +281,11 @@ You can add more SuperNodes and ClientApps by uncommenting their definitions in 
         depends_on:
           - superlink
 
-      clientapp-3:
+      superexec-clientapp-3:
         build:
           context: ${PROJECT_DIR:-.}
           dockerfile_inline: |
-            FROM flwr/clientapp:${FLWR_VERSION:-|stable_flwr_version|}
+            FROM flwr/superexec:${FLWR_VERSION:-|stable_flwr_version|}
 
             USER root
             RUN apt-get update \
@@ -290,10 +299,12 @@ You can add more SuperNodes and ClientApps by uncommenting their definitions in 
             RUN sed -i 's/.*flwr\[simulation\].*//' pyproject.toml \
               && python -m pip install -U --no-cache-dir .
 
-            ENTRYPOINT ["flwr-clientapp"]
+            ENTRYPOINT ["flower-superexec"]
         command:
           - --insecure
-          - --clientappio-api-address
+          - --plugin-type
+          - clientapp
+          - --appio-api-address
           - supernode-3:9096
         deploy:
           resources:
@@ -335,8 +346,9 @@ Restart the services with:
     # or with TLS enabled
     $ docker compose -f compose.yml -f with-tls.yml up --build -d
 
-Step 8: Persisting the SuperLink State and Enabling TLS
--------------------------------------------------------
+*********************************************************
+ Step 8: Persisting the SuperLink State and Enabling TLS
+*********************************************************
 
 To run Flower with persisted SuperLink state and enabled TLS, a slight change in the
 ``with-state.yml`` file is required:
@@ -376,8 +388,9 @@ To run Flower with persisted SuperLink state and enabled TLS, a slight change in
 
        $ flwr run quickstart-compose local-deployment-tls --stream
 
-Step 9: Merge Multiple Compose Files
-------------------------------------
+**************************************
+ Step 9: Merge Multiple Compose Files
+**************************************
 
 You can merge multiple Compose files into a single file. For instance, if you wish to
 combine the basic configuration with the TLS configuration, execute the following
@@ -391,8 +404,9 @@ command:
 This will merge the contents of ``compose.yml`` and ``with-tls.yml`` into a new file
 called ``my_compose.yml``.
 
-Step 10: Clean Up
------------------
+*******************
+ Step 10: Clean Up
+*******************
 
 Remove all services and volumes:
 
@@ -400,7 +414,8 @@ Remove all services and volumes:
 
     $ docker compose down -v
 
-Where to Go Next
-----------------
+******************
+ Where to Go Next
+******************
 
 - :doc:`run-quickstart-examples-docker-compose`

@@ -2,8 +2,9 @@
 .. meta::
     :description: Learn to build a federated ML workload using Flower with FedBN for non-IID data. Train a CNN with PyTorch on CIFAR-10 with minimal changes from the Quickstart.
 
-Implement FedBN
-===============
+#################
+ Implement FedBN
+#################
 
 This tutorial will show you how to use Flower to build a federated version of an
 existing machine learning workload with `FedBN <https://github.com/med-air/FedBN>`_, a
@@ -12,12 +13,13 @@ Convolutional Neural Network (with Batch Normalization layers) on the CIFAR-10 d
 When applying FedBN, only minor changes are needed compared to :doc:`Quickstart PyTorch
 <tutorial-quickstart-pytorch>`.
 
-Model
------
+*******
+ Model
+*******
 
 A full introduction to federated learning with PyTorch and Flower can be found in
-:doc:`Quickstart PyTorch <tutorial-quickstart-pytorch>`. This how-to guide varies only a
-few details in ``task.py``. FedBN requires a model architecture (defined in class
+:doc:`Quickstart PyTorch <tutorial-quickstart-pytorch>`. This how-to guide changes only
+a few details in ``task.py``. FedBN requires a model architecture (defined in class
 ``Net()``) that uses Batch Normalization layers:
 
 .. code-block:: python
@@ -55,43 +57,44 @@ works:
 
 So far this should all look fairly familiar if you've used Flower with PyTorch before.
 
-FedBN
------
+*******
+ FedBN
+*******
 
-To adopt FedBN, only the ``get_parameters`` and ``set_parameters`` functions in
-``task.py`` need to be revised. FedBN only changes the client-side by excluding batch
-normalization parameters from being exchanged with the server.
-
-We revise the *client* logic by changing ``get_parameters`` and ``set_parameters`` in
-``task.py``. The batch normalization parameters are excluded from model parameter list
-when sending to or receiving from the server:
+To adopt FedBN, we revise the ``train`` method in ``ClientApp``. The batch normalization
+parameters are excluded from model state dict when sending to or receiving from the
+``ServerApp``:
 
 .. code-block:: python
 
-    class FlowerClient(NumPyClient):
-        """Flower client for CIFAR-10 image classification using PyTorch."""
+    app = ClientApp()
 
-        # ... [other FlowerClient methods]
 
-        def get_parameters(self, config) -> List[np.ndarray]:
-            # Return model parameters as a list of NumPy ndarrays
-            # Exclude parameters of BN layers when using FedBN
-            return [
-                val.cpu().numpy()
-                for name, val in self.model.state_dict().items()
-                if "bn" not in name
-            ]
+    @app.train()
+    def train(msg: Message, context: Context):
+        """Train the model on local data."""
 
-        def set_parameters(self, parameters: List[np.ndarray]) -> None:
-            # Set model parameters from a list of NumPy ndarrays
-            keys = [k for k in self.model.state_dict().keys() if "bn" not in k]
-            params_dict = zip(keys, parameters)
-            state_dict = OrderedDict({k: torch.tensor(v) for k, v in params_dict})
-            self.model.load_state_dict(state_dict, strict=False)
+        # Load the model and initialize it with the received weights
+        model = Net()
+        state_dict = msg.content["arrays"].to_torch_state_dict()
+
+        # Exclude batch normalization parameters
+        state_dict_wo_bn = OrderedDict(
+            (k, v) for k, v in state_dict.items() if "bn" not in k
+        )
+        model.load_state_dict(state_dict_wo_bn, strict=True)
+
+        # ... [Perform training]
+
+        # Construct and return reply Message
+        state_dict_wo_bn = OrderedDict(
+            (k, v) for k, v in model.state_dict().items() if "bn" not in k
+        )
+        model_record = ArrayRecord(state_dict_wo_bn)
 
         ...
 
-To test the new appraoch, run the project again:
+To test the new approach, run the project again:
 
 .. code-block:: bash
 
@@ -99,9 +102,10 @@ To test the new appraoch, run the project again:
 
 Your PyTorch project now runs federated learning with FedBN. Congratulations!
 
-Next Steps
-----------
+************
+ Next Steps
+************
 
-The example is of course over-simplified since all clients load the exact same dataset.
-This isn't realistic. You now have the tools to explore this topic further. How about
-using different subsets of CIFAR-10 on each client? How about adding more clients?
+The example is certainly over-simplified since all ``ClientApp``\s load the exact same
+dataset. This isn't realistic. You now have the tools to explore this topic further. How
+about using different subsets of CIFAR-10 on each client? How about adding more clients?

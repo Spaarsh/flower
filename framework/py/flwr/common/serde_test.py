@@ -17,8 +17,8 @@
 
 import random
 import string
-from collections import OrderedDict
-from typing import Any, Callable, Optional, TypeVar, Union, cast
+from collections.abc import Callable
+from typing import Any, TypeVar, cast
 
 import pytest
 
@@ -27,7 +27,6 @@ from flwr.common.date import now
 from flwr.common.message import make_message
 
 # pylint: disable=E0611
-from flwr.proto import clientappio_pb2
 from flwr.proto import transport_pb2 as pb2
 from flwr.proto.fab_pb2 import Fab as ProtoFab
 from flwr.proto.message_pb2 import Context as ProtoContext
@@ -57,8 +56,6 @@ from .serde import (
     array_record_from_proto,
     array_record_to_proto,
     array_to_proto,
-    clientappstatus_from_proto,
-    clientappstatus_to_proto,
     config_record_from_proto,
     config_record_to_proto,
     context_from_proto,
@@ -87,7 +84,7 @@ def test_serialisation_deserialisation() -> None:
 
     for scalar in scalars:
         # Execute
-        scalar = cast(Union[bool, bytes, float, int, str], scalar)
+        scalar = cast(bool | bytes | float | int | str, scalar)
         serialized = scalar_to_proto(scalar)
         actual = scalar_from_proto(serialized)
 
@@ -129,9 +126,17 @@ def test_status_from_proto() -> None:
 
 def test_fab_to_proto() -> None:
     """Test Fab serialization."""
-    proto_fab = ProtoFab(hash_str="fab_test_hash", content=b"fab_test_content")
+    proto_fab = ProtoFab(
+        hash_str="fab_test_hash",
+        content=b"fab_test_content",
+        verifications={"fab_test_meta": "fab_test_meta"},
+    )
 
-    py_fab = typing.Fab(hash_str="fab_test_hash", content=b"fab_test_content")
+    py_fab = typing.Fab(
+        hash_str="fab_test_hash",
+        content=b"fab_test_content",
+        verifications={"fab_test_meta": "fab_test_meta"},
+    )
 
     converted_fab = fab_to_proto(py_fab)
 
@@ -141,9 +146,17 @@ def test_fab_to_proto() -> None:
 
 def test_fab_from_proto() -> None:
     """Test Fab deserialization."""
-    proto_fab = ProtoFab(hash_str="fab_test_hash", content=b"fab_test_content")
+    proto_fab = ProtoFab(
+        hash_str="fab_test_hash",
+        content=b"fab_test_content",
+        verifications={"meta_key": "meta_value"},
+    )
 
-    py_fab = typing.Fab(hash_str="fab_test_hash", content=b"fab_test_content")
+    py_fab = typing.Fab(
+        hash_str="fab_test_hash",
+        content=b"fab_test_content",
+        verifications={"meta_key": "meta_value"},
+    )
 
     converted_fab = fab_from_proto(proto_fab)
 
@@ -164,7 +177,7 @@ class RecordMaker:
         """Create a bytes."""
         return self.rng.getrandbits(n * 8).to_bytes(n, "little")
 
-    def get_str(self, length: Optional[int] = None) -> str:
+    def get_str(self, length: int | None = None) -> str:
         """Create a string."""
         char_pool = (
             string.ascii_letters + string.digits + " !@#$%^&*()_-+=[]|;':,./<>?{}"
@@ -173,18 +186,18 @@ class RecordMaker:
             length = self.rng.randint(1, 10)
         return "".join(self.rng.choices(char_pool, k=length))
 
-    def get_value(self, dtype: Union[type[T], str]) -> T:
+    def get_value(self, dtype: type[T] | str) -> T:
         """Create a value of a given type."""
         ret: Any = None
-        if dtype == bool:
+        if dtype is bool:
             ret = self.rng.random() < 0.5
-        elif dtype == str:
+        elif dtype is str:
             ret = self.get_str(self.rng.randint(10, 100))
-        elif dtype == int:
+        elif dtype is int:
             ret = self.rng.randint(-1 << 63, (1 << 63) - 1)
-        elif dtype == float:
+        elif dtype is float:
             ret = (self.rng.random() - 0.5) * (2.0 ** self.rng.randint(0, 50))
-        elif dtype == bytes:
+        elif dtype is bytes:
             ret = self.randbytes(self.rng.randint(10, 100))
         elif dtype == "uint":
             ret = self.rng.randint(0, (1 << 64) - 1)
@@ -223,9 +236,7 @@ class RecordMaker:
     def array_record(self) -> ArrayRecord:
         """Create a ArrayRecord."""
         num_arrays = self.rng.randint(1, 5)
-        arrays = OrderedDict(
-            [(self.get_str(), self.array()) for i in range(num_arrays)]
-        )
+        arrays = {self.get_str(): self.array() for i in range(num_arrays)}
         return ArrayRecord(arrays, keep_input=False)
 
     def metric_record(self) -> MetricRecord:
@@ -472,6 +483,10 @@ def test_run_serialization_deserialization() -> None:
         finished_at="",
         status=typing.RunStatus(status="running", sub_status="", details="OK"),
         flwr_aid="user123",
+        federation="mock-fed",
+        bytes_sent=2048,
+        bytes_recv=1024,
+        clientapp_runtime=3.14,
     )
 
     # Execute
@@ -481,37 +496,3 @@ def test_run_serialization_deserialization() -> None:
     # Assert
     assert isinstance(proto, ProtoRun)
     assert original == deserialized
-
-
-def test_clientappstatus_to_proto() -> None:
-    """Test ClientApp status message (de-)serialization."""
-    # Prepare
-    # pylint: disable=E1101
-    code_msg = clientappio_pb2.ClientAppOutputCode.SUCCESS
-    status_msg = clientappio_pb2.ClientAppOutputStatus(code=code_msg, message="Success")
-
-    code = typing.ClientAppOutputCode.SUCCESS
-    status = typing.ClientAppOutputStatus(code=code, message="Success")
-
-    # Execute
-    actual_status_msg = clientappstatus_to_proto(status=status)
-
-    # Assert
-    assert actual_status_msg == status_msg
-
-
-def test_clientappstatus_from_proto() -> None:
-    """Test ClientApp status message (de-)serialization."""
-    # Prepare
-    # pylint: disable=E1101
-    code_msg = clientappio_pb2.ClientAppOutputCode.SUCCESS
-    status_msg = clientappio_pb2.ClientAppOutputStatus(code=code_msg, message="Success")
-
-    code = typing.ClientAppOutputCode.SUCCESS
-    status = typing.ClientAppOutputStatus(code=code, message="Success")
-
-    # Execute
-    actual_status = clientappstatus_from_proto(msg=status_msg)
-
-    # Assert
-    assert actual_status == status

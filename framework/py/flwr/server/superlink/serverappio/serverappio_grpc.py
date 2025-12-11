@@ -16,7 +16,6 @@
 
 
 from logging import INFO
-from typing import Optional
 
 import grpc
 
@@ -38,7 +37,7 @@ def run_serverappio_api_grpc(
     state_factory: LinkStateFactory,
     ffs_factory: FfsFactory,
     objectstore_factory: ObjectStoreFactory,
-    certificates: Optional[tuple[bytes, bytes, bytes]],
+    certificates: tuple[bytes, bytes, bytes] | None,
 ) -> grpc.Server:
     """Run ServerAppIo API (gRPC, request-response)."""
     # Create ServerAppIo API gRPC server
@@ -58,7 +57,7 @@ def run_serverappio_api_grpc(
         certificates=certificates,
     )
 
-    log(INFO, "Flower ECE: Starting ServerAppIo API (gRPC-rere) on %s", address)
+    log(INFO, "Flower Deployment Runtime: Starting ServerAppIo API on %s", address)
     serverappio_grpc_server.start()
 
     return serverappio_grpc_server

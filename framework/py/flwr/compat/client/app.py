@@ -16,10 +16,10 @@
 
 
 import time
+from collections.abc import Callable
 from contextlib import AbstractContextManager
 from logging import ERROR, INFO, WARN
 from pathlib import Path
-from typing import Callable, Optional, Union
 
 from cryptography.hazmat.primitives.asymmetric import ec
 from grpc import RpcError
@@ -28,21 +28,16 @@ from flwr.app.error import Error
 from flwr.cli.config_utils import get_fab_metadata
 from flwr.cli.install import install_from_fab
 from flwr.client.client import Client
-from flwr.client.client_app import ClientApp, LoadClientAppError
-from flwr.client.grpc_adapter_client.connection import grpc_adapter
-from flwr.client.grpc_rere_client.connection import grpc_request_response
 from flwr.client.message_handler.message_handler import handle_control_message
 from flwr.client.numpy_client import NumPyClient
 from flwr.client.run_info_store import DeprecatedRunInfoStore
 from flwr.client.typing import ClientFnExt
+from flwr.clientapp.client_app import ClientApp, LoadClientAppError
 from flwr.common import GRPC_MAX_MESSAGE_LENGTH, Context, EventType, Message, event
 from flwr.common.address import parse_address
 from flwr.common.constant import (
     MAX_RETRY_DELAY,
-    TRANSPORT_TYPE_GRPC_ADAPTER,
     TRANSPORT_TYPE_GRPC_BIDI,
-    TRANSPORT_TYPE_GRPC_RERE,
-    TRANSPORT_TYPE_REST,
     TRANSPORT_TYPES,
     ErrorCode,
 )
@@ -51,11 +46,12 @@ from flwr.common.logger import log, warn_deprecated_feature
 from flwr.common.retry_invoker import RetryInvoker, RetryState, exponential
 from flwr.common.typing import Fab, Run, RunNotRunningException, UserConfig
 from flwr.compat.client.grpc_client.connection import grpc_connection
+from flwr.supercore.object_store import ObjectStoreFactory
 from flwr.supernode.nodestate import NodeStateFactory
 
 
 def _check_actionable_client(
-    client: Optional[Client], client_fn: Optional[ClientFnExt]
+    client: Client | None, client_fn: ClientFnExt | None
 ) -> None:
     if client_fn is None and client is None:
         raise ValueError(
@@ -76,17 +72,17 @@ def _check_actionable_client(
 def start_client(
     *,
     server_address: str,
-    client_fn: Optional[ClientFnExt] = None,
-    client: Optional[Client] = None,
+    client_fn: ClientFnExt | None = None,
+    client: Client | None = None,
     grpc_max_message_length: int = GRPC_MAX_MESSAGE_LENGTH,
-    root_certificates: Optional[Union[bytes, str]] = None,
-    insecure: Optional[bool] = None,
-    transport: Optional[str] = None,
-    authentication_keys: Optional[
-        tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey]
-    ] = None,
-    max_retries: Optional[int] = None,
-    max_wait_time: Optional[float] = None,
+    root_certificates: bytes | str | None = None,
+    insecure: bool | None = None,
+    transport: str | None = None,
+    authentication_keys: (
+        tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey] | None
+    ) = None,
+    max_retries: int | None = None,
+    max_wait_time: float | None = None,
 ) -> None:
     """Start a Flower client node which connects to a Flower server.
 
@@ -121,10 +117,8 @@ def start_client(
         Starts an insecure gRPC connection when True. Enables HTTPS connection
         when False, using system certificates if `root_certificates` is None.
     transport : Optional[str] (default: None)
-        Configure the transport layer. Allowed values:
-        - 'grpc-bidi': gRPC, bidirectional streaming
-        - 'grpc-rere': gRPC, request-response (experimental)
-        - 'rest': HTTP (experimental)
+        **[Deprecated]** This argument is no longer supported and will be
+        removed in a future release.
     authentication_keys : Optional[Tuple[PrivateKey, PublicKey]] (default: None)
         Tuple containing the elliptic curve private key and public key for
         authentication from the cryptography library.
@@ -180,6 +174,12 @@ def start_client(
     )
     warn_deprecated_feature(name=msg)
 
+    if transport is not None and transport != "grpc-bidi":
+        raise ValueError(
+            f"Transport type {transport} is not supported. "
+            "Use 'grpc-bidi' or None (default) instead."
+        )
+
     event(EventType.START_CLIENT_ENTER)
     start_client_internal(
         server_address=server_address,
@@ -206,19 +206,19 @@ def start_client_internal(
     *,
     server_address: str,
     node_config: UserConfig,
-    load_client_app_fn: Optional[Callable[[str, str, str], ClientApp]] = None,
-    client_fn: Optional[ClientFnExt] = None,
-    client: Optional[Client] = None,
+    load_client_app_fn: Callable[[str, str, str], ClientApp] | None = None,
+    client_fn: ClientFnExt | None = None,
+    client: Client | None = None,
     grpc_max_message_length: int = GRPC_MAX_MESSAGE_LENGTH,
-    root_certificates: Optional[Union[bytes, str]] = None,
-    insecure: Optional[bool] = None,
-    transport: Optional[str] = None,
-    authentication_keys: Optional[
-        tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey]
-    ] = None,
-    max_retries: Optional[int] = None,
-    max_wait_time: Optional[float] = None,
-    flwr_path: Optional[Path] = None,
+    root_certificates: bytes | str | None = None,
+    insecure: bool | None = None,
+    transport: str | None = None,
+    authentication_keys: (
+        tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey] | None
+    ) = None,
+    max_retries: int | None = None,
+    max_wait_time: float | None = None,
+    flwr_path: Path | None = None,
 ) -> None:
     """Start a Flower client node which connects to a Flower server.
 
@@ -343,8 +343,8 @@ def start_client_internal(
     )
 
     # DeprecatedRunInfoStore gets initialized when the first connection is established
-    run_info_store: Optional[DeprecatedRunInfoStore] = None
-    state_factory = NodeStateFactory()
+    run_info_store: DeprecatedRunInfoStore | None = None
+    state_factory = NodeStateFactory(objectstore_factory=ObjectStoreFactory())
     state = state_factory.state()
 
     runs: dict[int, Run] = {}
@@ -429,7 +429,7 @@ def start_client_internal(
 
                     run: Run = runs[run_id]
                     if get_fab is not None and run.fab_hash:
-                        fab = get_fab(run.fab_hash, run_id)
+                        fab = get_fab(run.fab_hash, run_id)  # pylint: disable=E1102
                         # If `ClientApp` runs in the same process, install the FAB
                         install_from_fab(fab.content, flwr_path, True)
                         fab_id, fab_version = get_fab_metadata(fab.content)
@@ -538,9 +538,9 @@ def start_numpy_client(
     server_address: str,
     client: NumPyClient,
     grpc_max_message_length: int = GRPC_MAX_MESSAGE_LENGTH,
-    root_certificates: Optional[bytes] = None,
-    insecure: Optional[bool] = None,
-    transport: Optional[str] = None,
+    root_certificates: bytes | None = None,
+    insecure: bool | None = None,
+    transport: str | None = None,
 ) -> None:
     """Start a Flower NumPyClient which connects to a gRPC server.
 
@@ -573,10 +573,8 @@ def start_numpy_client(
         Starts an insecure gRPC connection when True. Enables HTTPS connection
         when False, using system certificates if `root_certificates` is None.
     transport : Optional[str] (default: None)
-        Configure the transport layer. Allowed values:
-        - 'grpc-bidi': gRPC, bidirectional streaming
-        - 'grpc-rere': gRPC, request-response (experimental)
-        - 'rest': HTTP (experimental)
+        **[Deprecated]** This argument is no longer supported and will be
+        removed in a future release.
 
     Examples
     --------
@@ -634,24 +632,24 @@ def start_numpy_client(
     )
 
 
-def _init_connection(transport: Optional[str], server_address: str) -> tuple[
+def _init_connection(transport: str | None, server_address: str) -> tuple[
     Callable[
         [
             str,
             bool,
             RetryInvoker,
             int,
-            Union[bytes, str, None],
-            Optional[tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey]],
+            bytes | str | None,
+            tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey] | None,
         ],
         AbstractContextManager[
             tuple[
-                Callable[[], Optional[Message]],
+                Callable[[], Message | None],
                 Callable[[Message], None],
-                Optional[Callable[[], Optional[int]]],
-                Optional[Callable[[], None]],
-                Optional[Callable[[int], Run]],
-                Optional[Callable[[str, int], Fab]],
+                Callable[[], int | None] | None,
+                Callable[[], None] | None,
+                Callable[[int], Run] | None,
+                Callable[[str, int], Fab] | None,
             ]
         ],
     ],
@@ -672,23 +670,9 @@ def _init_connection(transport: Optional[str], server_address: str) -> tuple[
     if transport is None:
         transport = TRANSPORT_TYPE_GRPC_BIDI
 
-    # Use either gRPC bidirectional streaming or REST request/response
-    if transport == TRANSPORT_TYPE_REST:
-        try:
-            from requests.exceptions import ConnectionError as RequestsConnectionError
-
-            from flwr.client.rest_client.connection import http_request_response
-        except ModuleNotFoundError:
-            flwr_exit(ExitCode.COMMON_MISSING_EXTRA_REST)
-        if server_address[:4] != "http":
-            flwr_exit(ExitCode.SUPERNODE_REST_ADDRESS_INVALID)
-        connection, error_type = http_request_response, RequestsConnectionError
-    elif transport == TRANSPORT_TYPE_GRPC_RERE:
-        connection, error_type = grpc_request_response, RpcError
-    elif transport == TRANSPORT_TYPE_GRPC_ADAPTER:
-        connection, error_type = grpc_adapter, RpcError
-    elif transport == TRANSPORT_TYPE_GRPC_BIDI:
-        connection, error_type = grpc_connection, RpcError  # type: ignore[assignment]
+    # Use gRPC bidirectional streaming
+    if transport == TRANSPORT_TYPE_GRPC_BIDI:
+        connection, error_type = grpc_connection, RpcError
     else:
         raise ValueError(
             f"Unknown transport type: {transport} (possible: {TRANSPORT_TYPES})"

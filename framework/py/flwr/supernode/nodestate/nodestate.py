@@ -15,15 +15,15 @@
 """Abstract base class NodeState."""
 
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from collections.abc import Sequence
-from typing import Optional
 
 from flwr.common import Context, Message
 from flwr.common.typing import Run
+from flwr.supercore.corestate import CoreState
 
 
-class NodeState(ABC):
+class NodeState(CoreState):
     """Abstract base class for node state."""
 
     @abstractmethod
@@ -35,7 +35,7 @@ class NodeState(ABC):
         """Get the node ID."""
 
     @abstractmethod
-    def store_message(self, message: Message) -> Optional[str]:
+    def store_message(self, message: Message) -> str | None:
         """Store a message.
 
         Parameters
@@ -53,9 +53,9 @@ class NodeState(ABC):
     def get_messages(
         self,
         *,
-        run_ids: Optional[Sequence[int]] = None,
-        is_reply: Optional[bool] = None,
-        limit: Optional[int] = None,
+        run_ids: Sequence[int] | None = None,
+        is_reply: bool | None = None,
+        limit: int | None = None,
     ) -> Sequence[Message]:
         """Retrieve messages based on the specified filters.
 
@@ -88,7 +88,7 @@ class NodeState(ABC):
     def delete_messages(
         self,
         *,
-        message_ids: Optional[Sequence[str]] = None,
+        message_ids: Sequence[str] | None = None,
     ) -> None:
         """Delete messages based on the specified filters.
 
@@ -117,7 +117,7 @@ class NodeState(ABC):
         """
 
     @abstractmethod
-    def get_run(self, run_id: int) -> Optional[Run]:
+    def get_run(self, run_id: int) -> Run | None:
         """Retrieve a run by its ID.
 
         Parameters
@@ -142,7 +142,7 @@ class NodeState(ABC):
         """
 
     @abstractmethod
-    def get_context(self, run_id: int) -> Optional[Context]:
+    def get_context(self, run_id: int) -> Context | None:
         """Retrieve a context by its run ID.
 
         Parameters
@@ -170,58 +170,46 @@ class NodeState(ABC):
         """
 
     @abstractmethod
-    def create_token(self, run_id: int) -> str:
-        """Create a token for the given run ID.
+    def record_message_processing_start(self, message_id: str) -> None:
+        """Record the start time of message processing based on the message ID.
 
         Parameters
         ----------
-        run_id : int
-            The ID of the run for which to create a token.
-
-        Returns
-        -------
-        str
-            A unique token associated with the run ID.
+        message_id : str
+            The ID of the message associated with the start time.
         """
 
     @abstractmethod
-    def verify_token(self, run_id: int, token: str) -> bool:
-        """Verify a token for the given run ID.
+    def record_message_processing_end(self, message_id: str) -> None:
+        """Record the end time of message processing based on the message ID.
 
         Parameters
         ----------
-        run_id : int
-            The ID of the run for which to verify the token.
-        token : str
-            The token to verify.
+        message_id : str
+            The ID of the message associated with the end time.
 
-        Returns
-        -------
-        bool
-            True if the token is valid for the run ID, False otherwise.
+        Raises
+        ------
+        ValueError
+            If the message ID is not found.
         """
 
     @abstractmethod
-    def delete_token(self, run_id: int) -> None:
-        """Delete the token for the given run ID.
+    def get_message_processing_duration(self, message_id: str) -> float:
+        """Get the message processing duration based on the message ID.
 
         Parameters
         ----------
-        run_id : int
-            The ID of the run for which to delete the token.
-        """
-
-    @abstractmethod
-    def get_run_id_by_token(self, token: str) -> Optional[int]:
-        """Get the run ID associated with a given token.
-
-        Parameters
-        ----------
-        token : str
-            The token to look up.
+        message_id : str
+            The ID of the message.
 
         Returns
         -------
-        Optional[int]
-            The run ID if the token is valid, otherwise None.
+        float
+            The processing duration in seconds.
+
+        Raises
+        ------
+        ValueError
+            If the message ID is not found, or if start/end times are missing.
         """

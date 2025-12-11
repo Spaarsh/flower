@@ -15,16 +15,10 @@
 """SuperLink utilities."""
 
 
-from typing import Optional, Union
-
 import grpc
 
 from flwr.common.constant import Status, SubStatus
-from flwr.common.inflatable import iterate_object_tree
 from flwr.common.typing import RunStatus
-from flwr.proto.fleet_pb2 import PushMessagesRequest  # pylint: disable=E0611
-from flwr.proto.message_pb2 import ObjectIDs  # pylint: disable=E0611
-from flwr.proto.serverappio_pb2 import PushInsMessagesRequest  # pylint: disable=E0611
 from flwr.server.superlink.linkstate import LinkState
 from flwr.supercore.object_store import ObjectStore
 
@@ -40,8 +34,8 @@ def check_abort(
     run_id: int,
     abort_status_list: list[str],
     state: LinkState,
-    store: Optional[ObjectStore] = None,
-) -> Union[str, None]:
+    store: ObjectStore | None = None,
+) -> str | None:
     """Check if the status of the provided `run_id` is in `abort_status_list`."""
     run_status: RunStatus = state.get_run_status({run_id})[run_id]
 
@@ -58,7 +52,7 @@ def check_abort(
     return None
 
 
-def abort_grpc_context(msg: Union[str, None], context: grpc.ServicerContext) -> None:
+def abort_grpc_context(msg: str | None, context: grpc.ServicerContext) -> None:
     """Abort context with statuscode PERMISSION_DENIED if `msg` is not None."""
     if msg is not None:
         context.abort(grpc.StatusCode.PERMISSION_DENIED, msg)
@@ -68,40 +62,9 @@ def abort_if(
     run_id: int,
     abort_status_list: list[str],
     state: LinkState,
-    store: Optional[ObjectStore],
+    store: ObjectStore | None,
     context: grpc.ServicerContext,
 ) -> None:
     """Abort context if status of the provided `run_id` is in `abort_status_list`."""
     msg = check_abort(run_id, abort_status_list, state, store)
     abort_grpc_context(msg, context)
-
-
-def store_mapping_and_register_objects(
-    store: ObjectStore, request: Union[PushInsMessagesRequest, PushMessagesRequest]
-) -> dict[str, ObjectIDs]:
-    """Store Message object to descendants mapping and preregister objects."""
-    if not request.messages_list:
-        return {}
-
-    objects_to_push: dict[str, ObjectIDs] = {}
-
-    # Get run_id from the first message in the list
-    # All messages of a request should in the same run
-    run_id = request.messages_list[0].metadata.run_id
-
-    for object_tree in request.message_object_trees:
-        all_object_ids = [obj.object_id for obj in iterate_object_tree(object_tree)]
-        msg_object_id, descendant_ids = all_object_ids[-1], all_object_ids[:-1]
-        # Store mapping
-        store.set_message_descendant_ids(
-            msg_object_id=msg_object_id, descendant_ids=descendant_ids
-        )
-
-        # Preregister
-        object_ids_just_registered = store.preregister(run_id, object_tree)
-        # Keep track of objects that need to be pushed
-        objects_to_push[msg_object_id] = ObjectIDs(
-            object_ids=object_ids_just_registered
-        )
-
-    return objects_to_push

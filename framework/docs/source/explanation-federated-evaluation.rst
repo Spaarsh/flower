@@ -2,17 +2,19 @@
 .. meta::
     :description: Learn the two main approaches to evaluating models in Flower: centralized (server-side) evaluation and federated (client-side) evaluation, with built-in strategies and configuration options.
 
-Federated evaluation
-====================
+######################
+ Federated evaluation
+######################
 
 There are two main approaches to evaluating models in federated learning systems:
 centralized (or server-side) evaluation and federated (or client-side) evaluation.
 
-Centralized Evaluation
-----------------------
+************************
+ Centralized Evaluation
+************************
 
 Built-In Strategies
-~~~~~~~~~~~~~~~~~~~
+===================
 
 All built-in strategies support centralized evaluation by providing an evaluation
 function during initialization. An evaluation function is any function that can take the
@@ -20,9 +22,11 @@ current global model parameters as input and return evaluation results:
 
 .. code-block:: python
 
-    from flwr.common import Context, NDArrays, Scalar
-    from flwr.server import ServerApp, ServerAppComponents, ServerConfig
+    from flwr.app import Context
+    from flwr.common import NDArrays, Scalar
+    from flwr.server import ServerAppComponents, ServerConfig
     from flwr.server.strategy import FedAvg
+    from flwr.serverapp import ServerApp
 
     from typing import Dict, Optional, Tuple
 
@@ -71,18 +75,19 @@ current global model parameters as input and return evaluation results:
     app = ServerApp(server_fn=server_fn)
 
 Custom Strategies
-~~~~~~~~~~~~~~~~~
+=================
 
 The ``Strategy`` abstraction provides a method called ``evaluate`` that can directly be
 used to evaluate the current global model parameters. The current server implementation
 calls ``evaluate`` after parameter aggregation and before federated evaluation (see next
 paragraph).
 
-Federated Evaluation
---------------------
+**********************
+ Federated Evaluation
+**********************
 
 Implementing Federated Evaluation
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+=================================
 
 Client-side evaluation happens in the ``Client.evaluate`` method and can be configured
 from the server side.
@@ -117,7 +122,7 @@ from the server side.
             return loss, num_examples_test, {"accuracy": accuracy}
 
 Configuring Federated Evaluation
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+================================
 
 Federated evaluation can be configured from the server side. Built-in strategies support
 the following arguments:
@@ -143,9 +148,10 @@ the following arguments:
 
 .. code-block:: python
 
-    from flwr.common import Context
-    from flwr.server import ServerApp, ServerAppComponents, ServerConfig
+    from flwr.app import Context
+    from flwr.server import ServerAppComponents, ServerConfig
     from flwr.server.strategy import FedAvg
+    from flwr.serverapp import ServerApp
 
 
     def evaluate_config(server_round: int):
@@ -178,7 +184,7 @@ the following arguments:
     app = ServerApp(server_fn=server_fn)
 
 Evaluating Local Model Updates During Training
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+==============================================
 
 Model parameters can also be evaluated during training. ``Client.fit`` can return
 arbitrary evaluation results as a dictionary:
@@ -220,8 +226,9 @@ arbitrary evaluation results as a dictionary:
             # ...
             pass
 
-Full Code Example
------------------
+*******************
+ Full Code Example
+*******************
 
 For a full code example that uses both centralized and federated evaluation, see the
 `Advanced TensorFlow Example

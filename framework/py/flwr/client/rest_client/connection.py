@@ -14,51 +14,48 @@
 # ==============================================================================
 """Contextmanager for a REST request-response channel to the Flower server."""
 
-from collections.abc import Iterator
+
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from copy import copy
-from logging import DEBUG, ERROR, INFO, WARN
-from typing import Callable, Optional, TypeVar, Union, cast
+from logging import ERROR, WARN
+from typing import TypeVar
 
 from cryptography.hazmat.primitives.asymmetric import ec
 from google.protobuf.message import Message as GrpcMessage
 from requests.exceptions import ConnectionError as RequestsConnectionError
 
-from flwr.app.metadata import Metadata
-from flwr.client.message_handler.message_handler import validate_out_message
 from flwr.common import GRPC_MAX_MESSAGE_LENGTH
 from flwr.common.constant import HEARTBEAT_DEFAULT_INTERVAL
 from flwr.common.exit import ExitCode, flwr_exit
-from flwr.common.heartbeat import HeartbeatSender
-from flwr.common.inflatable import (
-    get_all_nested_objects,
-    get_object_tree,
-    no_object_id_recompute,
-)
-from flwr.common.inflatable_rest_utils import (
-    make_pull_object_fn_rest,
-    make_push_object_fn_rest,
-)
-from flwr.common.inflatable_utils import (
-    inflate_object_from_contents,
-    pull_objects,
-    push_objects,
+from flwr.common.inflatable_protobuf_utils import (
+    make_confirm_message_received_fn_protobuf,
+    make_pull_object_fn_protobuf,
+    make_push_object_fn_protobuf,
 )
 from flwr.common.logger import log
 from flwr.common.message import Message, remove_content_from_message
 from flwr.common.retry_invoker import RetryInvoker
-from flwr.common.serde import message_to_proto, run_from_proto
+from flwr.common.serde import (
+    fab_from_proto,
+    message_from_proto,
+    message_to_proto,
+    run_from_proto,
+)
 from flwr.common.typing import Fab, Run
 from flwr.proto.fab_pb2 import GetFabRequest, GetFabResponse  # pylint: disable=E0611
 from flwr.proto.fleet_pb2 import (  # pylint: disable=E0611
-    CreateNodeRequest,
-    CreateNodeResponse,
-    DeleteNodeRequest,
-    DeleteNodeResponse,
+    ActivateNodeRequest,
+    ActivateNodeResponse,
+    DeactivateNodeRequest,
+    DeactivateNodeResponse,
     PullMessagesRequest,
     PullMessagesResponse,
     PushMessagesRequest,
     PushMessagesResponse,
+    RegisterNodeFleetRequest,
+    RegisterNodeFleetResponse,
+    UnregisterNodeFleetRequest,
+    UnregisterNodeFleetResponse,
 )
 from flwr.proto.heartbeat_pb2 import (  # pylint: disable=E0611
     SendNodeHeartbeatRequest,
@@ -67,6 +64,7 @@ from flwr.proto.heartbeat_pb2 import (  # pylint: disable=E0611
 from flwr.proto.message_pb2 import (  # pylint: disable=E0611
     ConfirmMessageReceivedRequest,
     ConfirmMessageReceivedResponse,
+    ObjectTree,
     PullObjectRequest,
     PullObjectResponse,
     PushObjectRequest,
@@ -74,6 +72,8 @@ from flwr.proto.message_pb2 import (  # pylint: disable=E0611
 )
 from flwr.proto.node_pb2 import Node  # pylint: disable=E0611
 from flwr.proto.run_pb2 import GetRunRequest, GetRunResponse  # pylint: disable=E0611
+from flwr.supercore.heartbeat import HeartbeatSender
+from flwr.supercore.primitives.asymmetric import generate_key_pairs, public_key_to_bytes
 
 try:
     import requests
@@ -81,8 +81,10 @@ except ModuleNotFoundError:
     flwr_exit(ExitCode.COMMON_MISSING_EXTRA_REST)
 
 
-PATH_CREATE_NODE: str = "api/v0/fleet/create-node"
-PATH_DELETE_NODE: str = "api/v0/fleet/delete-node"
+PATH_REGISTER_NODE: str = "/api/v0/fleet/register-node"
+PATH_ACTIVATE_NODE: str = "/api/v0/fleet/activate-node"
+PATH_DEACTIVATE_NODE: str = "/api/v0/fleet/deactivate-node"
+PATH_UNREGISTER_NODE: str = "/api/v0/fleet/unregister-node"
 PATH_PULL_MESSAGES: str = "/api/v0/fleet/pull-messages"
 PATH_PUSH_MESSAGES: str = "/api/v0/fleet/push-messages"
 PATH_PULL_OBJECT: str = "/api/v0/fleet/pull-object"
@@ -101,20 +103,20 @@ def http_request_response(  # pylint: disable=R0913,R0914,R0915,R0917
     insecure: bool,  # pylint: disable=unused-argument
     retry_invoker: RetryInvoker,
     max_message_length: int = GRPC_MAX_MESSAGE_LENGTH,  # pylint: disable=W0613
-    root_certificates: Optional[
-        Union[bytes, str]
-    ] = None,  # pylint: disable=unused-argument
-    authentication_keys: Optional[  # pylint: disable=unused-argument
-        tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey]
-    ] = None,
+    root_certificates: bytes | str | None = None,  # pylint: disable=unused-argument
+    authentication_keys: (
+        tuple[ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey] | None
+    ) = None,
 ) -> Iterator[
     tuple[
-        Callable[[], Optional[Message]],
-        Callable[[Message], None],
-        Callable[[], Optional[int]],
-        Callable[[], None],
+        int,
+        Callable[[], tuple[Message, ObjectTree] | None],
+        Callable[[Message, ObjectTree], set[str]],
         Callable[[int], Run],
         Callable[[str, int], Fab],
+        Callable[[int, str], bytes],
+        Callable[[int, str, bytes], None],
+        Callable[[int, str], None],
     ]
 ]:
     """Primitives for request/response-based interaction with a server.
@@ -141,15 +143,18 @@ def http_request_response(  # pylint: disable=R0913,R0914,R0915,R0917
         connection using the certificates will be established to an SSL-enabled
         Flower server. Bytes won't work for the REST API.
     authentication_keys : Optional[Tuple[PrivateKey, PublicKey]] (default: None)
-        Client authentication is not supported for this transport type.
+        SuperNode authentication is not supported for this transport type.
 
     Returns
     -------
-    receive : Callable
-    send : Callable
-    create_node : Optional[Callable]
-    delete_node : Optional[Callable]
-    get_run : Optional[Callable]
+    node_id : int
+    receive : Callable[[], Optional[tuple[Message, ObjectTree]]]
+    send : Callable[[Message, ObjectTree], set[str]]
+    get_run : Callable[[int], Run]
+    get_fab : Callable[[str, int], Fab]
+    pull_object : Callable[[str], bytes]
+    push_object : Callable[[str, bytes], None]
+    confirm_message_received : Callable[[str], None]
     """
     log(
         WARN,
@@ -165,7 +170,7 @@ def http_request_response(  # pylint: disable=R0913,R0914,R0915,R0917
     # Otherwise any server can fake its identity
     # Please refer to:
     # https://requests.readthedocs.io/en/latest/user/advanced/#ssl-cert-verification
-    verify: Union[bool, str] = True
+    verify: bool | str = True
     if isinstance(root_certificates, str):
         verify = root_certificates
     elif isinstance(root_certificates, bytes):
@@ -175,19 +180,28 @@ def http_request_response(  # pylint: disable=R0913,R0914,R0915,R0917
             "must be provided as a string path to the client.",
         )
     if authentication_keys is not None:
-        log(ERROR, "Client authentication is not supported for this transport type.")
+        log(ERROR, "SuperNode authentication is not supported for this transport type.")
+
+    # REST does NOT support node authentication
+    self_registered = False
+    if authentication_keys is None:
+        self_registered = True
+        authentication_keys = generate_key_pairs()
+    node_pk = public_key_to_bytes(authentication_keys[1])
 
     # Shared variables for inner functions
-    metadata: Optional[Metadata] = None
-    node: Optional[Node] = None
+    node: Node | None = None
+
+    # Remove should_giveup from RetryInvoker as REST does not support gRPC status codes
+    retry_invoker.should_giveup = None
 
     ###########################################################################
-    # heartbeat/create_node/delete_node/receive/send/get_run functions
+    # SuperNode functions
     ###########################################################################
 
     def _request(
         req: GrpcMessage, res_type: type[T], api_path: str, retry: bool = True
-    ) -> Optional[T]:
+    ) -> T | None:
         # Serialize the request
         req_bytes = req.SerializeToString()
 
@@ -232,6 +246,38 @@ def http_request_response(  # pylint: disable=R0913,R0914,R0915,R0917
         grpc_res.ParseFromString(res.content)
         return grpc_res
 
+    def _pull_object_protobuf(request: PullObjectRequest) -> PullObjectResponse:
+        res = _request(
+            req=request,
+            res_type=PullObjectResponse,
+            api_path=PATH_PULL_OBJECT,
+        )
+        if res is None:
+            raise ValueError(f"{PullObjectResponse.__name__} is None.")
+        return res
+
+    def _push_object_protobuf(request: PushObjectRequest) -> PushObjectResponse:
+        res = _request(
+            req=request,
+            res_type=PushObjectResponse,
+            api_path=PATH_PUSH_OBJECT,
+        )
+        if res is None:
+            raise ValueError(f"{PushObjectResponse.__name__} is None.")
+        return res
+
+    def _confirm_message_received_protobuf(
+        request: ConfirmMessageReceivedRequest,
+    ) -> ConfirmMessageReceivedResponse:
+        res = _request(
+            req=request,
+            res_type=ConfirmMessageReceivedResponse,
+            api_path=PATH_CONFIRM_MESSAGE_RECEIVED,
+        )
+        if res is None:
+            raise ValueError(f"{ConfirmMessageReceivedResponse.__name__} is None.")
+        return res
+
     def send_node_heartbeat() -> bool:
         # Get Node
         if node is None:
@@ -260,198 +306,115 @@ def http_request_response(  # pylint: disable=R0913,R0914,R0915,R0917
 
     heartbeat_sender = HeartbeatSender(send_node_heartbeat)
 
-    def create_node() -> Optional[int]:
-        """Set create_node."""
-        req = CreateNodeRequest(heartbeat_interval=HEARTBEAT_DEFAULT_INTERVAL)
+    def register_node() -> None:
+        """Register node with SuperLink."""
+        req = RegisterNodeFleetRequest(public_key=node_pk)
 
         # Send the request
-        res = _request(req, CreateNodeResponse, PATH_CREATE_NODE)
+        res = _request(req, RegisterNodeFleetResponse, PATH_REGISTER_NODE)
         if res is None:
-            return None
+            raise RuntimeError("Failed to register node")
+
+    def activate_node() -> int:
+        """Activate node and start heartbeat."""
+        req = ActivateNodeRequest(
+            public_key=node_pk,
+            heartbeat_interval=HEARTBEAT_DEFAULT_INTERVAL,
+        )
+
+        # Send the request
+        res = _request(req, ActivateNodeResponse, PATH_ACTIVATE_NODE)
+        if res is None:
+            raise RuntimeError("Failed to activate node")
 
         # Remember the node and start the heartbeat sender
         nonlocal node
-        node = res.node
+        node = Node(node_id=res.node_id)
         heartbeat_sender.start()
         return node.node_id
 
-    def delete_node() -> None:
-        """Set delete_node."""
+    def deactivate_node() -> None:
+        """Deactivate node and stop heartbeat."""
         nonlocal node
         if node is None:
-            log(ERROR, "Node instance missing")
-            return
+            raise RuntimeError("Node instance missing")
 
         # Stop the heartbeat sender
         heartbeat_sender.stop()
 
-        # Send DeleteNode request
-        req = DeleteNodeRequest(node=node)
+        # Send DeactivateNode request
+        req = DeactivateNodeRequest(node_id=node.node_id)
 
         # Send the request
-        res = _request(req, DeleteNodeResponse, PATH_DELETE_NODE)
+        res = _request(req, DeactivateNodeResponse, PATH_DEACTIVATE_NODE)
         if res is None:
-            return
+            raise RuntimeError("Failed to deactivate node")
+
+    def unregister_node() -> None:
+        """Unregister node from SuperLink."""
+        nonlocal node
+        if node is None:
+            raise RuntimeError("Node instance missing")
+
+        # Send UnregisterNode request
+        req = UnregisterNodeFleetRequest(node_id=node.node_id)
+
+        # Send the request
+        res = _request(req, UnregisterNodeFleetResponse, PATH_UNREGISTER_NODE)
+        if res is None:
+            raise RuntimeError("Failed to unregister node")
 
         # Cleanup
         node = None
 
-    def receive() -> Optional[Message]:
-        """Receive next Message from server."""
+    def receive() -> tuple[Message, ObjectTree] | None:
+        """Pull a message with its ObjectTree from SuperLink."""
         # Get Node
         if node is None:
-            log(ERROR, "Node instance missing")
-            return None
+            raise RuntimeError("Node instance missing")
 
-        # Request instructions (message) from server
+        # Try to pull a message with its object tree from SuperLink
         req = PullMessagesRequest(node=node)
-
-        # Send the request
         res = _request(req, PullMessagesResponse, PATH_PULL_MESSAGES)
         if res is None:
+            raise ValueError("PushMessagesResponse is None.")
+
+        # If no messages are available, return None
+        if len(res.messages_list) == 0:
             return None
 
-        # Get the current Messages
-        message_proto = None if len(res.messages_list) == 0 else res.messages_list[0]
-
-        # Discard the current message if not valid
-        if message_proto is not None and not (
-            message_proto.metadata.dst_node_id == node.node_id
-        ):
-            message_proto = None
+        # Get the current Message and its object tree
+        message_proto = res.messages_list[0]
+        object_tree = res.message_object_trees[0]
 
         # Construct the Message
-        in_message: Optional[Message] = None
+        in_message = message_from_proto(message_proto)
 
-        if message_proto:
-            log(INFO, "[Node] POST /%s: success", PATH_PULL_MESSAGES)
-            msg_id = message_proto.metadata.message_id
-            run_id = message_proto.metadata.run_id
+        # Return the Message and its object tree
+        return in_message, object_tree
 
-            def fn(request: PullObjectRequest) -> PullObjectResponse:
-                res = _request(
-                    req=request, res_type=PullObjectResponse, api_path=PATH_PULL_OBJECT
-                )
-                if res is None:
-                    raise ValueError("PushObjectResponse is None.")
-                return res
-
-            try:
-                all_object_contents = pull_objects(
-                    list(res.objects_to_pull[msg_id].object_ids) + [msg_id],
-                    pull_object_fn=make_pull_object_fn_rest(
-                        pull_object_rest=fn,
-                        node=node,
-                        run_id=run_id,
-                    ),
-                )
-
-                # Confirm that the message has been received
-                _request(
-                    req=ConfirmMessageReceivedRequest(
-                        node=node, run_id=run_id, message_object_id=msg_id
-                    ),
-                    res_type=ConfirmMessageReceivedResponse,
-                    api_path=PATH_CONFIRM_MESSAGE_RECEIVED,
-                )
-            except ValueError as e:
-                log(
-                    ERROR,
-                    "Pulling objects failed. Potential irrecoverable error: %s",
-                    str(e),
-                )
-            in_message = cast(
-                Message, inflate_object_from_contents(msg_id, all_object_contents)
-            )
-            # The deflated message doesn't contain the message_id (its own object_id)
-            # Inject
-            in_message.metadata.__dict__["_message_id"] = msg_id
-
-        # Remember `metadata` of the in message
-        nonlocal metadata
-        metadata = copy(in_message.metadata) if in_message else None
-
-        return in_message
-
-    def send(message: Message) -> None:
-        """Send Message result back to server."""
+    def send(message: Message, object_tree: ObjectTree) -> set[str]:
+        """Send the message with its ObjectTree to SuperLink."""
         # Get Node
         if node is None:
-            log(ERROR, "Node instance missing")
-            return
+            raise RuntimeError("Node instance missing")
 
-        # Get incoming message
-        nonlocal metadata
-        if metadata is None:
-            log(ERROR, "No current message")
-            return
+        # Remove the content from the message if it has
+        if message.has_content():
+            message = remove_content_from_message(message)
 
-        # Set message_id
-        message.metadata.__dict__["_message_id"] = message.object_id
-        # Validate out message
-        if not validate_out_message(message, metadata):
-            log(ERROR, "Invalid out message")
-            return
+        # Send the message with its ObjectTree to SuperLink
+        req = PushMessagesRequest(
+            node=node,
+            messages_list=[message_to_proto(message)],
+            message_object_trees=[object_tree],
+        )
+        res = _request(req, PushMessagesResponse, PATH_PUSH_MESSAGES)
+        if res is None:
+            raise ValueError("PushMessagesResponse is None.")
 
-        with no_object_id_recompute():
-            # Get all nested objects
-            all_objects = get_all_nested_objects(message)
-            object_tree = get_object_tree(message)
-
-            # Serialize Message
-            message_proto = message_to_proto(
-                message=remove_content_from_message(message)
-            )
-            req = PushMessagesRequest(
-                node=node,
-                messages_list=[message_proto],
-                message_object_trees=[object_tree],
-            )
-
-            # Send the request
-            res = _request(req, PushMessagesResponse, PATH_PUSH_MESSAGES)
-            if res:
-                log(
-                    INFO,
-                    "[Node] POST /%s: success, created result %s",
-                    PATH_PUSH_MESSAGES,
-                    res.results,  # pylint: disable=no-member
-                )
-
-            if res and res.objects_to_push:
-                objs_to_push = set(res.objects_to_push[message.object_id].object_ids)
-
-                def fn(request: PushObjectRequest) -> PushObjectResponse:
-                    res = _request(
-                        req=request,
-                        res_type=PushObjectResponse,
-                        api_path=PATH_PUSH_OBJECT,
-                    )
-                    if res is None:
-                        raise ValueError("PushObjectResponse is None.")
-                    return res
-
-                try:
-                    push_objects(
-                        all_objects,
-                        push_object_fn=make_push_object_fn_rest(
-                            push_object_rest=fn,
-                            node=node,
-                            run_id=message_proto.metadata.run_id,
-                        ),
-                        object_ids_to_push=objs_to_push,
-                    )
-                    log(DEBUG, "Pushed %s objects to servicer.", len(objs_to_push))
-                except ValueError as e:
-                    log(
-                        ERROR,
-                        "Pushing objects failed. Potential irrecoverable error: %s",
-                        str(e),
-                    )
-                    log(ERROR, str(e))
-
-        # Cleanup
-        metadata = None
+        # Get and return the object IDs to push
+        return set(res.objects_to_push)
 
     def get_run(run_id: int) -> Run:
         # Construct the request
@@ -471,16 +434,64 @@ def http_request_response(  # pylint: disable=R0913,R0914,R0915,R0917
         # Send the request
         res = _request(req, GetFabResponse, PATH_GET_FAB)
         if res is None:
-            return Fab("", b"")
+            return Fab("", b"", {})
 
-        return Fab(
-            res.fab.hash_str,
-            res.fab.content,
+        return fab_from_proto(res.fab)
+
+    def pull_object(run_id: int, object_id: str) -> bytes:
+        """Pull the object from the SuperLink."""
+        # Check Node
+        if node is None:
+            raise RuntimeError("Node instance missing")
+
+        fn = make_pull_object_fn_protobuf(
+            pull_object_protobuf=_pull_object_protobuf,
+            node=node,
+            run_id=run_id,
         )
+        return fn(object_id)
+
+    def push_object(run_id: int, object_id: str, contents: bytes) -> None:
+        """Push the object to the SuperLink."""
+        # Check Node
+        if node is None:
+            raise RuntimeError("Node instance missing")
+
+        fn = make_push_object_fn_protobuf(
+            push_object_protobuf=_push_object_protobuf,
+            node=node,
+            run_id=run_id,
+        )
+        fn(object_id, contents)
+
+    def confirm_message_received(run_id: int, object_id: str) -> None:
+        """Confirm that the message has been received."""
+        # Check Node
+        if node is None:
+            raise RuntimeError("Node instance missing")
+
+        fn = make_confirm_message_received_fn_protobuf(
+            confirm_message_received_protobuf=_confirm_message_received_protobuf,
+            node=node,
+            run_id=run_id,
+        )
+        fn(object_id)
 
     try:
+        if self_registered:
+            register_node()
+        node_id = activate_node()
         # Yield methods
-        yield (receive, send, create_node, delete_node, get_run, get_fab)
+        yield (
+            node_id,
+            receive,
+            send,
+            get_run,
+            get_fab,
+            pull_object,
+            push_object,
+            confirm_message_received,
+        )
     except Exception as exc:  # pylint: disable=broad-except
         log(ERROR, exc)
     # Cleanup
@@ -489,6 +500,8 @@ def http_request_response(  # pylint: disable=R0913,R0914,R0915,R0917
             if node is not None:
                 # Disable retrying
                 retry_invoker.max_tries = 1
-                delete_node()
+                deactivate_node()
+                if self_registered:
+                    unregister_node()
         except RequestsConnectionError:
             pass

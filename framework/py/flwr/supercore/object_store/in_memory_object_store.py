@@ -17,10 +17,8 @@
 
 import threading
 from dataclasses import dataclass
-from typing import Optional
 
 from flwr.common.inflatable import (
-    get_object_children_ids_from_object_content,
     get_object_id,
     is_valid_sha256_hash,
     iterate_object_tree,
@@ -37,6 +35,7 @@ class ObjectEntry:
 
     content: bytes
     is_available: bool
+    child_object_ids: list[str]  # List of child object IDs
     ref_count: int  # Number of references (direct parents) to this object
     runs: set[int]  # Set of run IDs that used this object
 
@@ -48,9 +47,6 @@ class InMemoryObjectStore(ObjectStore):
         self.verify = verify
         self.store: dict[str, ObjectEntry] = {}
         self.lock_store = threading.RLock()
-        # Mapping the Object ID of a message to the list of descendant object IDs
-        self.msg_descendant_objects_mapping: dict[str, list[str]] = {}
-        self.lock_msg_mapping = threading.RLock()
         # Mapping each run ID to a set of object IDs that are used in that run
         self.run_objects_mapping: dict[int, set[str]] = {}
 
@@ -70,6 +66,9 @@ class InMemoryObjectStore(ObjectStore):
                     self.store[obj_id] = ObjectEntry(
                         content=b"",  # Initially empty content
                         is_available=False,  # Initially not available
+                        child_object_ids=[  # List of child object IDs
+                            child.object_id for child in tree_node.children
+                        ],
                         ref_count=0,  # Reference count starts at 0
                         runs={run_id},  # Start with the current run ID
                     )
@@ -102,6 +101,32 @@ class InMemoryObjectStore(ObjectStore):
 
         return new_objects
 
+    def get_object_tree(self, object_id: str) -> ObjectTree:
+        """Get the object tree for a given object ID."""
+        with self.lock_store:
+            # Raise an exception if there's no object with the given ID
+            if not (object_entry := self.store.get(object_id)):
+                raise NoObjectInStoreError(
+                    f"Object with ID '{object_id}' was not pre-registered."
+                )
+
+            # Build the object trees of all children
+            try:
+                child_trees = [
+                    self.get_object_tree(child_id)
+                    for child_id in object_entry.child_object_ids
+                ]
+            except NoObjectInStoreError as e:
+                # Raise an error if any child object is missing
+                # This indicates an integrity issue
+                raise NoObjectInStoreError(
+                    f"Object tree for object ID '{object_id}' contains missing "
+                    "children. This may indicate a corrupted object store."
+                ) from e
+
+            # Create and return the ObjectTree for the current object
+            return ObjectTree(object_id=object_id, children=child_trees)
+
     def put(self, object_id: str, object_content: bytes) -> None:
         """Put an object into the store."""
         if self.verify:
@@ -128,30 +153,7 @@ class InMemoryObjectStore(ObjectStore):
             self.store[object_id].content = object_content
             self.store[object_id].is_available = True
 
-    def set_message_descendant_ids(
-        self, msg_object_id: str, descendant_ids: list[str]
-    ) -> None:
-        """Store the mapping from a ``Message`` object ID to the object IDs of its
-        descendants."""
-        with self.lock_msg_mapping:
-            self.msg_descendant_objects_mapping[msg_object_id] = descendant_ids
-
-    def get_message_descendant_ids(self, msg_object_id: str) -> list[str]:
-        """Retrieve the object IDs of all descendants of a given Message."""
-        with self.lock_msg_mapping:
-            if msg_object_id not in self.msg_descendant_objects_mapping:
-                raise NoObjectInStoreError(
-                    f"No message registered in Object Store with ID '{msg_object_id}'. "
-                    "Mapping to descendants could not be found."
-                )
-            return self.msg_descendant_objects_mapping[msg_object_id]
-
-    def delete_message_descendant_ids(self, msg_object_id: str) -> None:
-        """Delete the mapping from a ``Message`` object ID to its descendants."""
-        with self.lock_msg_mapping:
-            self.msg_descendant_objects_mapping.pop(msg_object_id, None)
-
-    def get(self, object_id: str) -> Optional[bytes]:
+    def get(self, object_id: str) -> bytes | None:
         """Get an object from the store."""
         with self.lock_store:
             # Check if the object ID is pre-registered
@@ -177,10 +179,7 @@ class InMemoryObjectStore(ObjectStore):
                     self.run_objects_mapping[run_id].discard(object_id)
 
                 # Decrease the reference count of its children
-                children_ids = get_object_children_ids_from_object_content(
-                    object_entry.content
-                )
-                for child_id in children_ids:
+                for child_id in object_entry.child_object_ids:
                     self.store[child_id].ref_count -= 1
 
                     # Recursively try to delete the child object
@@ -205,9 +204,6 @@ class InMemoryObjectStore(ObjectStore):
                     # Delete the message object and its unreferenced descendants
                     self.delete(object_id)
 
-                    # Delete the message's descendants mapping
-                    self.delete_message_descendant_ids(object_id)
-
             # Remove the run from the mapping
             del self.run_objects_mapping[run_id]
 
@@ -215,7 +211,6 @@ class InMemoryObjectStore(ObjectStore):
         """Clear the store."""
         with self.lock_store:
             self.store.clear()
-            self.msg_descendant_objects_mapping.clear()
             self.run_objects_mapping.clear()
 
     def __contains__(self, object_id: str) -> bool:
