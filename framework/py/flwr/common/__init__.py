@@ -103,6 +103,7 @@ __all__ = [
     "NDArrays",
     "Parameters",
     "ParametersRecord",
+    "pickle_serialization",
     "Properties",
     "ReconnectIns",
     "RecordDict",
